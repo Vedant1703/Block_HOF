@@ -17,7 +17,13 @@ import { toast } from "@/hooks/use-toast"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Tabs, TabsContent } from "@/components/ui/tabs"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-
+import contractABI from "../contract_data/AcademicNFT.json";
+import contractAddress from "../contract_data/AcademicNFT-address.json";
+import { title } from "framer-motion/client";
+import {ethers} from "ethers"
+import { uploadFile } from "@/lib/ipfs";
+// import fs from 'fs'
+import path from "path"
 interface IssuerProfile {
   username: string
   email: string
@@ -48,9 +54,19 @@ export default function IssuerPage() {
   const [isProfileComplete, setIsProfileComplete] = useState(false)
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
   const [certificateType, setCertificateType] = useState<"course" | "company">("course")
-  const [certificateImage, setCertificateImage] = useState<string | null>(null)
+  const [certificateFile, setCertificateFile] = useState<File | null>(null);
+  const[certificateImage,setCertificateImage] = useState<string>(""); 
   const [issuedCertificates, setIssuedCertificates] = useState<Certificate[]>([])
   const [showSuccessAlert, setShowSuccessAlert] = useState(false)
+  const [value, setValue] = useState(""); 
+  const [retrievedValue, setRetrievedValue] = useState(null);
+  const [account, setAccount] = useState(null);
+  const [provider, setProvider] = useState(null);
+  const [signer, setSigner] = useState(null);
+  const [contract, setContract] = useState(null);
+  const [depositAmount, setDepositAmount] = useState("");
+  const [userBalance, setUserBalance] = useState(null);
+  const [cid, setCid] = useState("");
 
   const [profile, setProfile] = useState<IssuerProfile>({
     username: "",
@@ -59,19 +75,131 @@ export default function IssuerPage() {
     profileImage: null,
   })
 
-  const [certificateForm, setCertificateForm] = useState({
-    recipientAddress: "",
-    name: "",
-    // Course specific
-    courseName: "",
-    courseDuration: "",
-    courseGrade: "",
-    // Company specific
-    position: "",
-    joinDate: "",
-    resignDate: "",
-    remarks: "",
-  })
+  const funcParams = {
+    student: "0x4799CC4983a60DFe11233871c6E0D380179A056D",
+    title: "test certi",
+    issuer: "teacher",
+    grade: "Z",
+    tokenURI: "ipfs://HASH_"
+  }
+
+  const handleUpload = async () => {
+    try {
+      const returnedCid = await uploadFile(certificateFile); // call the upload function
+      setCid(returnedCid); // store the CID in state
+      console.log("CID:", returnedCid);
+    } catch (error) {
+      console.error("Upload failed:", error);
+    }
+  };
+
+  const initializeEthers = async () => {
+      if (!window.ethereum) {
+        alert("MetaMask not detected!");
+        return;
+      }
+      
+      try {
+        const _provider = new ethers.BrowserProvider(window.ethereum);
+        const _signer = await _provider.getSigner();
+        const _contract = new ethers.Contract(contractAddress.address, contractABI.abi, _signer);
+  
+        setProvider(_provider);
+        setSigner(_signer);
+        setContract(_contract);
+  
+        const accounts = await _provider.send("eth_requestAccounts", []);
+        setAccount(accounts[0]);
+      } catch (error) {
+        console.error("Error initializing ethers:", error);
+      }
+    };
+
+    const setContractValue = async () => {
+        if (!contract) return alert("Please connect wallet first!");
+        try {
+          const tx = await contract.set(BigInt(value)); // Convert string to BigInt
+          await tx.wait(); // Wait for transaction confirmation
+          alert("Value set successfully!");
+        } catch (error) {
+          console.error("Error setting value:", error);
+        }
+      };
+    
+      useEffect(() => {
+        if (window.ethereum) {
+          initializeEthers();
+        }
+      }, []);
+
+      const [certificateForm, setCertificateForm] = useState({
+        recipientAddress: "",
+        name: "",
+        // Course specific
+        courseName: "",
+        courseDuration: "",
+        courseGrade: "",
+        // Company specific
+        position: "",
+        joinDate: "",
+        resignDate: "",
+        remarks: "",
+      })
+
+      const issueCerti = async () => {
+        if (!contract) return alert("Please connect wallet first!");
+      
+        try {
+          // const { student, title, issuer, grade, tokenURI } = funcParams;
+          console.log("is this what we are looking for",certificateForm);
+          console.log(walletAddress)
+          console.log(certificateForm.courseGrade)
+
+
+          const imgUrl = `ipfs://${cid}`
+          console.log(imgUrl)
+
+          // using fs module overwrite metadata.json in lib dir
+          const metadata = {
+            name: certificateForm.courseName,
+            description: certificateForm.courseGrade,
+            image: imgUrl,
+          };
+          const metadataBlob = new Blob([JSON.stringify(metadata, null, 2)], { type: "application/json" });
+          const metadataFile = new File([metadataBlob], "metadata.json", { type: "application/json" });
+
+          // upload the json to ipfs using the pinata upload func // Adjust path to your upload function
+              const metadataCid = await uploadFile(metadataFile);
+              console.log(`Metadata uploaded: ipfs://${metadataCid}`);
+              issueCertificate(metadataCid);
+
+
+          // pass the cid issueCertificate
+          // function issueCertificate(metadataCid) {
+          //   // Your logic here to mint the NFT using this metadataCid
+          //   const tokenURI = `ipfs://${metadataCid}`;
+          //   console.log("Issuing certificate with metadata:", tokenURI);
+          
+          //   // Call your smart contract mint function here using tokenURI
+          // }
+          
+
+      
+          const tx = await contract.issueCertificate(
+            certificateForm.recipientAddress,          // address
+            certificateForm.courseName,
+            "fdsfdsfsd",            // string       // string
+            certificateForm.courseGrade,    // uint256 (make sure it's a number)
+            `ipfs://${metadataCid}`      // string (usually an IPFS URI)
+          );
+      
+          await tx.wait();
+          console.log("Transaction successful:", tx);
+        } catch (error) {
+          console.error("Error issuing certificate:", error);
+        }
+      };
+
 
   useEffect(() => {
     // Check if user is logged in
@@ -140,23 +268,17 @@ export default function IssuerPage() {
   }
 
   const handleCertificateImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-
-    const reader = new FileReader()
-    reader.onload = (event) => {
-      if (event.target?.result) {
-        setCertificateImage(event.target.result as string)
-      }
-    }
-    reader.readAsDataURL(file)
-  }
+    const file = e.target.files?.[0];
+    if (!file) return;
+  
+    setCertificateFile(file); // just store the file object
+  };
 
   const issueCertificate = async (e: React.FormEvent) => {
     e.preventDefault()
 
     // Validate form
-    if (!certificateForm.recipientAddress || !certificateImage) {
+    if (!certificateForm.recipientAddress || !certificateFile) {
       toast({
         title: "Missing Information",
         description: "Please fill in all required fields and upload a certificate image",
@@ -189,7 +311,7 @@ export default function IssuerPage() {
                 resignDate: certificateForm.resignDate,
                 remarks: certificateForm.remarks,
               },
-        image: certificateImage,
+        image: `ipfs://${cid}`,
       }
 
       // Add to issued certificates
@@ -202,18 +324,18 @@ export default function IssuerPage() {
       setTimeout(() => setShowSuccessAlert(false), 5000)
 
       // Reset form
-      setCertificateForm({
-        recipientAddress: "",
-        name: "",
-        courseName: "",
-        courseDuration: "",
-        courseGrade: "",
-        position: "",
-        joinDate: "",
-        resignDate: "",
-        remarks: "",
-      })
-      setCertificateImage(null)
+      // setCertificateForm({
+      //   recipientAddress: "",
+      //   name: "",
+      //   courseName: "",
+      //   courseDuration: "",
+      //   courseGrade: "",
+      //   position: "",
+      //   joinDate: "",
+      //   resignDate: "",
+      //   remarks: "",
+      // })
+      // setCertificateImage(null)
 
       toast({
         title: "Certificate Issued",
@@ -663,11 +785,16 @@ export default function IssuerPage() {
                         </div>
                       </div>
                     </div>
+                    
+                    <Button
+                      type="submit"
+                      className="w-full bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700" onClick={handleUpload}>
+                      Upload image
+                    </Button>
 
                     <Button
                       type="submit"
-                      className="w-full bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700"
-                    >
+                      className="w-full bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700" onClick={issueCerti}>
                       Issue Certificate as NFT
                     </Button>
                   </form>
